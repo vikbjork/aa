@@ -3,81 +3,78 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>AI-Gitarrlärare — Multiband Fingerkalibrering</title>
+<title>AI-Gitarrlärare — Fingerkalibrering</title>
 <style>
   :root {
-    --bg: #0b0f14; --card:#121821; --fg:#e9f0f8; --muted:#a6b3c2; --accent:#6bc3ff; --good:#33d17a; --warn:#ffb554; --err:#ff6b6b;
+    --bg: #0b0f14; --fg: #e9f0f8; --accent:#6bc3ff; --good:#33d17a;
   }
-  * { box-sizing: border-box; }
-  html, body { height: 100%; margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
-  header { padding:10px; text-align:center; background:#121821; position:sticky; top:0; z-index:10;}
-  header h1 { font-size:18px; margin:0; }
-  #stage { position:relative; width:100%; height:100dvh; overflow:hidden; background:black; }
-  video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform:scaleX(-1); }
-  canvas { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
-  .controls { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); display:flex; flex-wrap:wrap; gap:5px; background:rgba(0,0,0,0.4); padding:5px; border-radius:8px; }
-  button { font-size:14px; padding:5px 8px; border:none; border-radius:6px; background:#16202d; color:var(--fg); font-weight:600; cursor:pointer; }
-  button:disabled { opacity:0.6; cursor:not-allowed; }
-  #instruktion { position:absolute; top:10px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:6px; font-size:14px; }
+  html,body {margin:0;padding:0;background:var(--bg);color:var(--fg);font-family:system-ui,sans-serif;}
+  #stage {position:relative;width:100%;height:100vh;overflow:hidden;background:black;}
+  video {position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1);}
+  canvas {position:absolute;inset:0;width:100%;height:100%;pointer-events:none;}
+  .ui-overlay {position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,0.5);padding:20px;border-radius:10px;text-align:center;}
+  .ui-overlay h2 {margin:0;font-size:32px;}
+  .controls {position:absolute;bottom:10px;left:50%;transform:translateX(-50%);display:flex;flex-wrap:wrap;gap:8px;}
+  button {font-size:16px;padding:10px 14px;border:none;border-radius:8px;background:var(--accent);color:#000;font-weight:600;}
+  button:disabled {opacity:0.5;}
 </style>
 </head>
 <body>
-<header><h1>🎸 AI-Gitarrlärare — Fingerkalibrering</h1></header>
 <div id="stage">
   <video id="cam" playsinline autoplay muted></video>
   <canvas id="overlay"></canvas>
-  <div id="instruktion">Tryck "Starta kamera"</div>
-  <div class="controls">
+  <div id="overlayUI" class="ui-overlay">
+    <h2 id="instruktion">Tryck "Starta kamera"</h2>
+  </div>
+  <div class="controls" id="controls">
     <button id="startBtn">Starta kamera</button>
-    <button id="fsBtn">Fullskärm</button>
     <button id="saveBtn" disabled>Spara punkt</button>
-    <button id="undoBtn" disabled>Ångra</button>
     <button id="resetBtn" disabled>Rensa</button>
     <button id="dotsBtn" disabled>Em-prickar</button>
+    <button id="fsBtn">Fullskärm</button>
   </div>
 </div>
 
-<!-- MediaPipe Hands -->
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.min.js"></script>
 <script>
 const video = document.getElementById('cam');
 const canvas = document.getElementById('overlay');
 const ctx = canvas.getContext('2d');
-const instruktion = document.getElementById('instruktion');
 
+const instr = document.getElementById('instruktion');
 const startBtn = document.getElementById('startBtn');
-const fsBtn = document.getElementById('fsBtn');
 const saveBtn = document.getElementById('saveBtn');
-const undoBtn = document.getElementById('undoBtn');
 const resetBtn = document.getElementById('resetBtn');
 const dotsBtn = document.getElementById('dotsBtn');
+const fsBtn = document.getElementById('fsBtn');
 
-let points = []; // {band: number, x: px, y: px}
-let calibrationBands = [1, 3, 5, 7];
+let calibrationBands = [1,3,5,7];
+let points = [];
 let currentBandIndex = 0;
-let homography = null;
 let showDots = false;
+let fingertip = null;
+let homography = null;
+let wakeLock = null;
 
-function fitCanvas(){
-  canvas.width = stage.clientWidth;
-  canvas.height = stage.clientHeight;
-}
-window.addEventListener('resize', fitCanvas);
+function fitCanvas(){canvas.width = stage.clientWidth;canvas.height = stage.clientHeight;}
+window.addEventListener('resize',fitCanvas);
 
 function drawOverlay(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
-
-  // Rita sparade punkter
-  ctx.fillStyle = 'rgba(51,209,122,0.8)';
-  points.forEach(p=>{
+  if(points.length>0){
+    ctx.fillStyle='rgba(51,209,122,0.8)';
+    points.forEach(p=>{
+      ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);ctx.fill();
+      ctx.fillText("B"+p.band,p.x+8,p.y);
+    });
+  }
+  if(fingertip){
+    ctx.fillStyle='red';
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 6, 0, Math.PI*2);
+    ctx.arc(fingertip.x,fingertip.y,6,0,Math.PI*2);
     ctx.fill();
-    ctx.fillText("B" + p.band, p.x+8, p.y);
-  });
-
-  // Rita hals om kalibrerad
+  }
   if(homography){
     drawNeck();
     if(showDots) drawEmChord();
@@ -87,143 +84,113 @@ function drawOverlay(){
 function drawNeck(){
   const strings = 6;
   const frets = 12;
+  ctx.strokeStyle='rgba(255,255,255,0.4)';
   for(let f=0; f<=frets; f++){
-    const nx0 = mapPoint(0,f/12);
-    const nx1 = mapPoint(1,f/12);
-    ctx.strokeStyle='rgba(255,255,255,0.4)';
+    const y = f/12;
     ctx.beginPath();
-    ctx.moveTo(nx0.x, nx0.y);
-    ctx.lineTo(nx1.x, nx1.y);
+    ctx.moveTo(0,canvas.height*y);
+    ctx.lineTo(canvas.width,canvas.height*y);
     ctx.stroke();
   }
+  ctx.strokeStyle='rgba(255,255,255,0.3)';
   for(let s=0; s<strings; s++){
-    const ny0 = mapPoint(s/(strings-1),0);
-    const ny1 = mapPoint(s/(strings-1),1);
-    ctx.strokeStyle='rgba(255,255,255,0.3)';
+    const x = s/(strings-1);
     ctx.beginPath();
-    ctx.moveTo(ny0.x, ny0.y);
-    ctx.lineTo(ny1.x, ny1.y);
+    ctx.moveTo(canvas.width*x,0);
+    ctx.lineTo(canvas.width*x,canvas.height);
     ctx.stroke();
   }
 }
 
 function drawEmChord(){
-  // Em = 2:a band på A och D-sträng
-  const strings = [1,2]; // 0=E låga, 5=E höga
+  // Em = band 2 på A(1) och D(2) sträng
+  const strings = [1,2];
   strings.forEach(s=>{
-    const p = mapPoint(s/5, 2/12); // band 2
+    const x = s/(5);
+    const y = 2/12;
     ctx.fillStyle='rgba(51,209,122,0.9)';
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 8, 0, Math.PI*2);
+    ctx.arc(canvas.width*x,canvas.height*y,8,0,Math.PI*2);
     ctx.fill();
   });
 }
 
-function mapPoint(nx, ny){
-  // nx: 0..1 tvärs strängar, ny: 0..1 längs halsen
-  const model = [
-    {x:0,y:0}, {x:1,y:0},
-    {x:1,y:1}, {x:0,y:1}
-  ];
-  // enkel bilinjär approx för denna demo
-  return {x: nx*canvas.width, y: ny*canvas.height};
-}
-
-// MediaPipe setup
-const hands = new Hands({locateFile: (file) => {
-  return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-}});
-hands.setOptions({
-  maxNumHands: 1,
-  modelComplexity: 1,
-  minDetectionConfidence: 0.7,
-  minTrackingConfidence: 0.7
-});
-hands.onResults(onResults);
-
-let camStream = null;
-function startCamera(){
-  fitCanvas();
-  navigator.mediaDevices.getUserMedia({video:{facingMode:'user', width:1280, height:720}})
-    .then(stream=>{
-      camStream = new Camera(video, {
-        onFrame: async () => {
-          await hands.send({image: video});
-        },
-        width: 1280, height: 720
-      });
-      camStream.start();
-      saveBtn.disabled = false;
-      instruktion.textContent = `Placera fingertoppen på band ${calibrationBands[currentBandIndex]} och tryck "Spara punkt"`;
-    });
-}
-
-function onResults(results){
-  ctx.drawImage(results.image, 0,0, canvas.width, canvas.height);
-  drawOverlay();
-  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
-    const fingerTip = results.multiHandLandmarks[0][8]; // pekfinger topp
-    const px = fingerTip.x * canvas.width;
-    const py = fingerTip.y * canvas.height;
-    ctx.fillStyle = 'red';
-    ctx.beginPath();
-    ctx.arc(px, py, 5, 0, Math.PI*2);
-    ctx.fill();
+function nextInstruction(){
+  if(currentBandIndex < calibrationBands.length){
+    instr.textContent = `Placera fingret på band ${calibrationBands[currentBandIndex]}`;
+  } else {
+    instr.textContent = `Kalibrering klar — välj ackord`;
   }
 }
 
 function savePoint(){
-  // Tar senaste fingertoppen från senaste frame
-  // Här förenklat: använd senaste i points[]
-  const band = calibrationBands[currentBandIndex];
-  // OBS: Här skulle vi hämta coords från senaste MediaPipe-output
-  // För demo: vi tar mittpunkten på canvas
-  const px = canvas.width/2;
-  const py = canvas.height/2;
-  points.push({band, x:px, y:py});
+  if(!fingertip) return;
+  points.push({band:calibrationBands[currentBandIndex],x:fingertip.x,y:fingertip.y});
   currentBandIndex++;
-  if(currentBandIndex < calibrationBands.length){
-    instruktion.textContent = `Placera fingertoppen på band ${calibrationBands[currentBandIndex]} och tryck "Spara punkt"`;
+  if(currentBandIndex >= calibrationBands.length){
+    homography = {}; // placeholder för riktig matris
+    saveBtn.disabled=true;
+    resetBtn.disabled=false;
+    dotsBtn.disabled=false;
+    instr.textContent = "Kalibrering klar — klicka 'Em-prickar'";
   } else {
-    instruktion.textContent = `Kalibrering klar`;
-    resetBtn.disabled = false;
-    dotsBtn.disabled = false;
-    // Här skulle vi räkna ut homografin
+    nextInstruction();
   }
-  drawOverlay();
-}
-
-function undoPoint(){
-  points.pop();
-  currentBandIndex = Math.max(0, currentBandIndex-1);
-  instruktion.textContent = `Placera fingertoppen på band ${calibrationBands[currentBandIndex]} och tryck "Spara punkt"`;
-  drawOverlay();
 }
 
 function resetCal(){
-  points = [];
-  currentBandIndex = 0;
-  homography = null;
-  instruktion.textContent = `Placera fingertoppen på band ${calibrationBands[currentBandIndex]} och tryck "Spara punkt"`;
-  drawOverlay();
+  points=[];currentBandIndex=0;homography=null;
+  saveBtn.disabled=false;dotsBtn.disabled=true;
+  resetBtn.disabled=true;showDots=false;
+  nextInstruction();
 }
 
 function toggleDots(){
   showDots = !showDots;
-  drawOverlay();
 }
 
-// Fullscreen
-fsBtn.addEventListener('click', ()=>{
-  if(stage.requestFullscreen) stage.requestFullscreen();
+fsBtn.addEventListener('click',()=>{if(stage.requestFullscreen)stage.requestFullscreen();});
+
+startBtn.addEventListener('click',()=>{
+  fitCanvas();
+  hands.setOptions({
+    maxNumHands:1,
+    modelComplexity:0,
+    minDetectionConfidence:0.6,
+    minTrackingConfidence:0.6
+  });
+  const camera = new Camera(video, {
+    onFrame: async()=>{await hands.send({image:video});},
+    width:1280,height:720
+  });
+  camera.start();
+  saveBtn.disabled=false;
+  currentBandIndex=0;
+  nextInstruction();
+  requestWakeLock();
 });
 
-startBtn.addEventListener('click', startCamera);
-saveBtn.addEventListener('click', savePoint);
-undoBtn.addEventListener('click', undoPoint);
-resetBtn.addEventListener('click', resetCal);
-dotsBtn.addEventListener('click', toggleDots);
+saveBtn.addEventListener('click',savePoint);
+resetBtn.addEventListener('click',resetCal);
+dotsBtn.addEventListener('click',toggleDots);
 
+// MediaPipe
+const hands = new Hands({locateFile: (file)=>`https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`});
+hands.onResults(results=>{
+  ctx.drawImage(results.image,0,0,canvas.width,canvas.height);
+  if(results.multiHandLandmarks && results.multiHandLandmarks.length>0){
+    const tip = results.multiHandLandmarks[0][8];
+    fingertip = {x:(1-tip.x)*canvas.width,y:tip.y*canvas.height};
+  } else {
+    fingertip=null;
+  }
+  drawOverlay();
+});
+
+// Wake lock
+async function requestWakeLock(){
+  try{wakeLock = await navigator.wakeLock.request('screen');}catch(e){console.log(e);}
+}
 </script>
 </body>
 </html>

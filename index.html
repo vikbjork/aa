@@ -2,11 +2,11 @@
 <html lang="sv">
 <head>
 <meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>RiskRadar Sverige — Varningar i realtid</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>RiskRadar — SMHI</title>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
-  :root{--bg:#0b1016;--card:#121826;--fg:#e8eef6;--muted:#9fb0c6;--line:#1f2a3a;--accent:#6bc3ff;--warn:#ffb554;--err:#ff6b6b;--ok:#33d17a}
+  :root{--bg:#0b1016;--card:#121826;--fg:#e8eef6;--muted:#9fb0c6;--line:#1f2a3a;--accent:#6bc3ff;--ok:#33d17a}
   *{box-sizing:border-box} html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif}
   .app{display:grid;grid-template-columns:430px 1fr;gap:14px;max-width:1600px;margin:0 auto;padding:14px}
   @media (max-width:1000px){.app{grid-template-columns:1fr;grid-template-rows:48dvh 52dvh}}
@@ -17,148 +17,151 @@
   .btn{border:1px solid var(--line);background:#162335;color:var(--fg);padding:8px 12px;border-radius:10px;cursor:pointer;font-weight:600}
   .filters{display:flex;gap:8px;flex-wrap:wrap;padding:10px 12px;border-bottom:1px solid var(--line)}
   .chip{display:inline-flex;align-items:center;gap:8px;background:#0f1726;border:1px solid var(--line);padding:6px 10px;border-radius:999px}
-  #list{height:calc(100% - 120px);overflow:auto}
-  .card{padding:12px;border-bottom:1px solid var(--line);cursor:pointer}
+  #list{height:calc(100% - 170px);overflow:auto}
+  .card{padding:12px;border-bottom:1px solid var(--line)}
   .title{margin:0 0 6px;font-weight:800}
   .meta{font-size:13px;color:var(--muted)}
-  .tags{display:flex;gap:6px;margin-top:6px;flex-wrap:wrap}
-  .tag{font-size:12px;border:1px solid var(--line);background:#0f1726;padding:3px 8px;border-radius:999px}
-  .sev-high{background:#3a130f;border-color:#6a2018;color:#ffb5a4}
-  .sev-med{background:#2b210f;border-color:#5a4a18;color:#ffe1a4}
-  .sev-low{background:#122811;border-color:#1c3c1a;color:#bfe8c2}
+  .legend{margin-left:auto;font-size:12px;color:var(--muted)}
   #map{height:100%;width:100%}
-  .loader{padding:12px}
-  .skeleton{height:92px;border-radius:10px;background:linear-gradient(90deg,#0c1523,#0e1a2b,#0c1523);background-size:200% 100%;animation:shine 1.1s infinite;margin-bottom:10px}
-  @keyframes shine{0%{background-position:200% 0}100%{background-position:-200% 0}}
-  .pill{font-size:12px;color:var(--muted);margin-left:auto}
-  a.more{color:var(--accent);text-decoration:none}
+  .dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px}
 </style>
 </head>
 <body>
 <div class="app">
-  <!-- Lista -->
+  <!-- Vänster: lista + filter -->
   <div class="panel">
     <header>
-      <h1>⚠️ RiskRadar Sverige</h1>
+      <h1>⚠️ RiskRadar — SMHI</h1>
       <div class="controls">
-        <button id="refresh" class="btn">↻ Uppdatera</button>
+        <button id="gpsBtn" class="btn">📍 Min plats</button>
+        <button id="refreshBtn" class="btn">↻ Uppdatera</button>
       </div>
     </header>
+
     <div class="filters">
-      <label class="chip"><input type="checkbox" id="fltSmhi" checked> SMHI varningar</label>
-      <label class="chip"><input type="checkbox" id="fltKris" checked> Krisinformation</label>
-      <label class="chip"><input type="checkbox" id="fltFood" checked> Återkallad mat</label>
-      <span class="pill" id="status">Laddar…</span>
+      <label class="chip"><input id="fwiNation" type="checkbox" checked> Brandrisk (tim, nationellt)</label>
+      <label class="chip"><input id="fwiPoint" type="checkbox" checked> Brandrisk vid min plats</label>
+      <label class="chip"><input id="warn" type="checkbox" checked> Vädervarningar</label>
+      <label class="chip"><input id="wind" type="checkbox"> Vind (obs)</label>
+      <label class="chip"><input id="temp" type="checkbox"> Temperatur (obs)</label>
+      <span class="legend">Brandrisk färg: <span class="dot" style="background:#0fa;opacity:.6"></span>låg <span class="dot" style="background:#ffb554;opacity:.75"></span>medel <span class="dot" style="background:#ff6b6b;opacity:.9"></span>hög</span>
     </div>
-    <div id="list">
-      <div class="loader"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
-    </div>
+
+    <div id="list"></div>
   </div>
 
-  <!-- Karta -->
+  <!-- Höger: karta -->
   <div class="panel"><div id="map"></div></div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
-const API_SMHI = '/api/smhi-warnings';
-const API_KRIS = '/api/kris';
-const API_FOOD = '/api/livsmedel';
-let map, markers=[];
-const listEl = document.getElementById('list');
-const statusEl = document.getElementById('status');
-const fltSmhi = document.getElementById('fltSmhi');
-const fltKris = document.getElementById('fltKris');
-const fltFood = document.getElementById('fltFood');
+let map, markers=[], userPos=null; 
+const el = (id)=>document.getElementById(id);
+const listEl = el('list');
 
 function initMap(){
-  map = L.map('map',{zoomControl:true}).setView([62.0,15.0], 4.8);
+  map = L.map('map').setView([62,16], 5);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(map);
 }
 function clearMarkers(){ markers.forEach(m=>m.remove()); markers=[]; }
-function sevClass(level){
-  // En enkel mappning
-  if (level >= 3) return 'sev-high';
-  if (level === 2) return 'sev-med';
-  return 'sev-low';
-}
+function addMarker(lat,lng,html,opts={}){ const m=L.circleMarker([lat,lng],{radius:opts.r||6,color:opts.stroke||'#111',weight:opts.w||1,fillColor:opts.fill||'#6bc3ff',fillOpacity:opts.a??0.8}).addTo(map).bindPopup(html); markers.push(m); return m; }
+function colorFWI(v){ if (v==null) return '#888'; if (v<10) return '#07cba4'; if (v<25) return '#ffb554'; return '#ff6b6b'; }
 
-async function fetchJSON(url){
-  const r = await fetch(url);
-  if (!r.ok) throw new Error('HTTP '+r.status);
-  return r.json();
-}
+async function fetchJSON(url){ const r=await fetch(url); if(!r.ok) throw new Error(url+' '+r.status); return r.json(); }
 
-function render(items){
-  clearMarkers();
-  listEl.innerHTML = '';
-  if (!items.length){ listEl.innerHTML = '<div class="loader" style="color:#9fb0c6">Inga aktuella varningar just nu.</div>'; return; }
+function km(a,b){const R=6371,toRad=d=>d*Math.PI/180;const dLat=toRad(b.lat-a.lat),dLng=toRad(b.lng-a.lng);const s1=Math.sin(dLat/2),s2=Math.sin(dLng/2);const q=s1*s1+Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*s2*s2;return 2*R*Math.asin(Math.sqrt(q));}
 
+function renderList(items){
+  listEl.innerHTML='';
+  if(!items.length){ listEl.innerHTML='<div class="meta" style="padding:12px">Inga poster just nu.</div>'; return; }
   items.forEach(it=>{
-    const div = document.createElement('div');
-    div.className = 'card';
-    const sev = it.severity ?? 1;
+    const div=document.createElement('div'); div.className='card';
     div.innerHTML = `
-      <div class="title">${it.title || 'Meddelande'}</div>
-      <div class="meta">${it.source || ''} • ${it.region || it.area || ''} • ${it.time || ''}</div>
-      <div class="tags">
-        <span class="tag ${sevClass(sev)}">${it.levelText || 'Info'}</span>
-        ${it.category ? `<span class="tag">#${it.category}</span>`:''}
-      </div>
-      ${it.summary ? `<div class="meta" style="margin-top:6px">${it.summary}</div>`:''}
-      ${it.url ? `<div style="margin-top:6px"><a class="more" href="${it.url}" target="_blank" rel="noopener">Läs mer</a></div>`:''}
+      <div class="title">${it.title||''}</div>
+      <div class="meta">${it.source||''} • ${it.time||''} • ${it.region||it.area||''}</div>
+      ${it.summary?`<div class="meta" style="margin-top:6px">${it.summary}</div>`:''}
+      ${it.url?`<div style="margin-top:6px"><a href="${it.url}" target="_blank" rel="noopener" style="color:#6bc3ff">Läs mer</a></div>`:''}
     `;
     listEl.appendChild(div);
-
-    // karta
-    if (it.lat != null && it.lng != null){
-      const m = L.marker([it.lat,it.lng]).addTo(map).bindPopup(`<strong>${it.title||''}</strong><br>${it.region||it.area||''}<br><a href="${it.url||'#'}" target="_blank" rel="noopener">Mer info</a>`);
-      markers.push(m);
-    }
-    // polygonstöd (SMHI-områden) – enkel bounding-box fallback
-    if (it.bounds && it.bounds.length === 4){
-      const [[s,w],[n,e]] = [[it.bounds[0],it.bounds[1]],[it.bounds[2],it.bounds[3]]];
-      const rect = L.rectangle([[s,w],[n,e]], {color:'#6bc3ff', weight:1, fillOpacity:0.07}).addTo(map);
-      markers.push(rect);
-    }
   });
 }
 
-async function loadAll(){
-  statusEl.textContent = 'Hämtar…';
-  const tasks = [];
-  if (fltSmhi.checked) tasks.push(fetchJSON(API_SMHI)); else tasks.push(Promise.resolve([]));
-  if (fltKris.checked) tasks.push(fetchJSON(API_KRIS)); else tasks.push(Promise.resolve([]));
-  if (fltFood.checked) tasks.push(fetchJSON(API_FOOD)); else tasks.push(Promise.resolve([]));
+async function load(){
+  clearMarkers();
+  const wantFWI = el('fwiNation').checked;
+  const wantPoint = el('fwiPoint').checked && userPos;
+  const wantWarn = el('warn').checked;
+  const wantWind = el('wind').checked;
+  const wantTemp = el('temp').checked;
+
+  const tasks=[];
+  if(wantFWI)  tasks.push(fetchJSON('/api/smhi/brandrisk-hourly'));
+  else tasks.push(Promise.resolve({items:[],meta:{}}));
+  if(wantPoint) tasks.push(fetchJSON(`/api/smhi/brandrisk-point?lat=${userPos.lat}&lon=${userPos.lng}`));
+  else tasks.push(Promise.resolve({items:[],meta:{}}));
+  if(wantWarn) tasks.push(fetchJSON('/api/smhi/warnings')); else tasks.push(Promise.resolve([]));
+  if(wantWind) tasks.push(fetchJSON('/api/smhi/wind')); else tasks.push(Promise.resolve([]));
+  if(wantTemp) tasks.push(fetchJSON('/api/smhi/temp')); else tasks.push(Promise.resolve([]));
 
   try{
-    const [smhi, kris, food] = await Promise.all(tasks);
-    // slå ihop och sortera på allvarlighetsgrad + tid
-    const all = [...smhi, ...kris, ...food].sort((a,b)=>{
-      const sa = a.severity??0, sb = b.severity??0;
-      if (sb !== sa) return sb-sa;
-      return (b.time||'').localeCompare(a.time||'');
+    const [fwiNation, fwiPoint, warns, wind, temp] = await Promise.all(tasks);
+
+    // Brandrisk nationellt (rasterpunkter); rita diskreta cirklar färgade efter FWI
+    (fwiNation.items||[]).slice(0,1500).forEach(p=>{
+      const c=colorFWI(p.value);
+      addMarker(p.lat,p.lon,`<b>Brandrisk (FWI)</b><br>${p.time}<br>FWI: ${p.value}`,{fill:c,a:.7,r:5,stroke:'#111',w:1});
     });
-    render(all);
-    statusEl.textContent = `Visar ${all.length} poster`;
-  }catch(err){
-    console.error(err);
-    statusEl.textContent = 'Fel vid hämtning';
-    render([]);
+
+    // Brandrisk vid punkt
+    (fwiPoint.items||[]).slice(0,48).forEach(p=>{
+      const c=colorFWI(p.value);
+      addMarker(p.lat,p.lon,`<b>Brandrisk (punkt)</b><br>${p.time}<br>FWI: ${p.value}`,{fill:c,a:.9,r:7});
+    });
+
+    // Varningar (polygoncentroid); röd/orange/gul
+    (warns||[]).forEach(w=>{
+      const col = /röd/i.test(w.levelText||'') ? '#ff6b6b' : (/orange/i.test(w.levelText||'') ? '#ffb554' : '#ffd86b');
+      if (w.lat!=null && w.lng!=null) addMarker(w.lat,w.lng,`<b>${w.title||'Varning'}</b><br>${w.levelText||''}<br>${w.region||''}<br>${w.time||''}<br><a href="${w.url||'#'}" target="_blank" rel="noopener">Mer info</a>`,{fill:col,a:.8,r:8});
+    });
+
+    // Vind obs
+    (wind||[]).forEach(o=>{
+      addMarker(o.lat,o.lng,`<b>Vind</b><br>${o.value} m/s<br>${o.time}<br>${o.station||''}`,{fill:'#6bc3ff',a:.8,r:6});
+    });
+    // Temp obs
+    (temp||[]).forEach(o=>{
+      addMarker(o.lat,o.lng,`<b>Temp</b><br>${o.value} °C<br>${o.time}<br>${o.station||''}`,{fill:'#a0e85a',a:.8,r:6});
+    });
+
+    // Listan visar varningar + topp från FWI (för textöversikt)
+    const listItems = [
+      ...(warns||[]).map(x=>({title:x.title, source:'SMHI Varning', time:x.time, region:x.region, summary:x.summary, url:x.url})),
+      ...(fwiPoint.items||[]).slice(0,6).map(x=>({title:`Brandrisk vid din plats — FWI ${x.value}`, source:'SMHI FWI punkt', time:x.time})),
+    ];
+    renderList(listItems);
+  }catch(e){
+    console.error(e);
+    renderList([]);
   }
 }
 
-// UI hooks
-document.getElementById('refresh').addEventListener('click', loadAll);
-fltSmhi.addEventListener('change', loadAll);
-fltKris.addEventListener('change', loadAll);
-fltFood.addEventListener('change', loadAll);
+function getGPS(){
+  if(!navigator.geolocation){ alert('Ingen GPS i denna enhet/webbläsare'); return; }
+  navigator.geolocation.getCurrentPosition(
+    p=>{ userPos={lat:p.coords.latitude,lng:p.coords.longitude}; L.circle([userPos.lat,userPos.lng],{radius:200,color:'#6bc3ff',fillOpacity:.12}).addTo(map); map.setView([userPos.lat,userPos.lng], 9); load(); },
+    _=>{ alert('Kunde inte hämta position'); },
+    {enableHighAccuracy:true,timeout:8000,maximumAge:60000}
+  );
+}
 
-// start
+document.getElementById('gpsBtn').addEventListener('click', getGPS);
+document.getElementById('refreshBtn').addEventListener('click', load);
+['fwiNation','fwiPoint','warn','wind','temp'].forEach(id=>document.getElementById(id).addEventListener('change', load));
+
 initMap();
-loadAll();
-// auto-uppdatera var 5:e minut
-setInterval(loadAll, 5*60*1000);
+load();
+setInterval(load, 5*60*1000);
 </script>
 </body>
 </html>

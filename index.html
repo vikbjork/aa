@@ -1,210 +1,263 @@
 <!doctype html>
 <html lang="sv">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>AI‑Gitarrlärare — Steg 1: Kamera + Canvas</title>
-  <style>
-    :root {
-      --bg:#0b0f14; --card:#121821; --fg:#e9f0f8; --muted:#a6b3c2; --accent:#6bc3ff;
-      --good:#33d17a; --warn:#ffb554; --err:#ff6b6b;
-    }
-    *{box-sizing:border-box}
-    html,body{height:100%}
-    body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif}
-    header{padding:20px;text-align:center}
-    header h1{margin:0 0 6px;font-size:clamp(20px,4vw,28px)}
-    header p{margin:0;color:var(--muted)}
-    .wrap{max-width:960px;margin:0 auto;padding:16px}
-    .card{background:var(--card);border:1px solid #1f2732;border-radius:16px;padding:16px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
-    .stage{position:relative;width:100%;aspect-ratio:16/9;background:#0a0f15;border-radius:12px;overflow:hidden;border:1px solid #1a2230}
-    video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)} /* selfie-spegel */
-    canvas{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-    svg{position:absolute;inset:0;width:100%;height:100%;pointer-events:none}
-    .controls{display:flex;flex-wrap:wrap;gap:10px;margin-top:14px}
-    button{cursor:pointer;appearance:none;border:1px solid #2a3443;background:#16202d;color:var(--fg);padding:10px 14px;border-radius:12px;font-weight:600}
-    button:disabled{opacity:.6;cursor:not-allowed}
-    .pill{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border-radius:999px;background:#101722;border:1px solid #1f2733;color:var(--muted);font-size:13px}
-    .log{margin-top:10px;font-size:13px;color:var(--muted);white-space:pre-wrap}
-  </style>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI-Gitarrlärare — Kalibrering (A) + Helskärm</title>
+<style>
+  :root{--bg:#0b0f14;--card:#121821;--fg:#e9f0f8;--muted:#a6b3c2;--accent:#6bc3ff;--good:#33d17a}
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,Inter,sans-serif}
+  header{padding:14px 16px;text-align:center}
+  header h1{margin:0 0 4px;font-size:clamp(18px,4vw,26px)}
+  header p{margin:0;color:var(--muted)}
+  .wrap{max-width:960px;margin:0 auto;padding:12px}
+  .card{background:var(--card);border:1px solid #1f2732;border-radius:14px;padding:12px;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .stage{position:relative;width:100%;aspect-ratio:9/16; /* mobilvänligt */ background:#0a0f15;border-radius:12px;overflow:hidden;border:1px solid #1a2230}
+  @media(min-width:700px){ .stage{aspect-ratio:16/9} }
+  video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;transform:scaleX(-1)}
+  canvas,svg{position:absolute;inset:0;width:100%;height:100%}
+  canvas{pointer-events:none}
+  svg{pointer-events:none}
+  .controls{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+  button{cursor:pointer;border:1px solid #2a3443;background:#16202d;color:#e9f0f8;padding:9px 12px;border-radius:12px;font-weight:600}
+  button:disabled{opacity:.6;cursor:not-allowed}
+  .row{display:flex;gap:8px;flex-wrap:wrap}
+  .log{margin-top:10px;font-size:13px;color:var(--muted);white-space:pre-wrap}
+  .fs-hint{font-size:12px;color:var(--muted);margin-top:6px}
+  .full{position:fixed;inset:0;max-width:none;padding:8px}
+  .safe{padding-bottom:calc(env(safe-area-inset-bottom,0px) + 8px)}
+</style>
 </head>
 <body>
-  <header>
-    <h1>AI‑Gitarrlärare — Steg 1</h1>
-    <p>Kör kameran i selfie‑läge och lägg canvas/SVG‑overlay ovanpå (för prickar, hals, etiketter).</p>
-  </header>
+<header>
+  <h1>AI-Gitarrlärare — Kalibrering</h1>
+  <p>Klicka 4 hörn runt halsen: <b>ö-v → ö-h → n-h → n-v</b>. Slå på Em-prickar.</p>
+</header>
 
-  <div class="wrap">
-    <div class="card">
-      <div class="pill">📷 Selfie‑läge • 🎯 Overlay aktiv • 🔇 Ljud tillkommer i Steg 2</div>
-
-      <div class="stage" id="stage">
-        <video id="cam" playsinline muted autoplay></video>
-        <canvas id="layer"></canvas>
-        <svg id="ui" viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
-      </div>
-
-      <div class="controls">
-        <button id="btnStart">Starta kamera</button>
-        <button id="btnDots" disabled>Visa/Dölj testprickar</button>
-        <button id="btnNeck" disabled>Visa/Dölj gitarrhals (SVG)</button>
-        <button id="btnLabels" disabled>Visa/Dölj etiketter</button>
-        <button id="btnClear" disabled>Rensa overlay</button>
-      </div>
-      <div class="log" id="log">Redo. Klicka “Starta kamera” och godkänn kameratillgång.</div>
-    </div>
+<div class="wrap card safe" id="container">
+  <div class="stage" id="stage">
+    <video id="cam" playsinline muted autoplay></video>
+    <canvas id="layer"></canvas>
+    <svg id="ui" viewBox="0 0 1280 720" preserveAspectRatio="none"></svg>
   </div>
 
-  <script>
-    const video = document.getElementById('cam');
-    const canvas = document.getElementById('layer');
-    const ctx = canvas.getContext('2d');
-    const svg = document.getElementById('ui');
-    const logEl = document.getElementById('log');
-    const btnStart = document.getElementById('btnStart');
-    const btnDots = document.getElementById('btnDots');
-    const btnNeck = document.getElementById('btnNeck');
-    const btnLabels = document.getElementById('btnLabels');
-    const btnClear = document.getElementById('btnClear');
+  <div class="controls">
+    <div class="row">
+      <button id="btnStart">Starta kamera</button>
+      <button id="btnFullscreen">Fullskärm</button>
+      <button id="btnWake">Håll skärmen vaken</button>
+    </div>
+    <div class="row">
+      <button id="btnCalib" disabled>Starta kalibrering</button>
+      <button id="btnUndo" disabled>Ångra punkt</button>
+      <button id="btnReset" disabled>Rensa kalibrering</button>
+    </div>
+    <div class="row">
+      <button id="btnDots" disabled>Visa/Dölj Em-prickar</button>
+      <button id="btnNeck" disabled>Visa/Dölj hals</button>
+      <button id="btnLabels" disabled>Visa/Dölj etiketter</button>
+    </div>
+  </div>
+  <div class="fs-hint">Tips: Fullskärm + “Håll skärmen vaken” ger bäst övningskänsla.</div>
+  <div class="log" id="log">Redo. Klicka “Starta kamera”.</div>
+</div>
 
-    let stream = null;
-    let showDots = false;
-    let showNeck = true;
-    let showText = true;
+<script>
+const video = document.getElementById('cam');
+const canvas = document.getElementById('layer');
+const ctx = canvas.getContext('2d');
+const svg = document.getElementById('ui');
+const logEl = document.getElementById('log');
+const stage = document.getElementById('stage');
+const container = document.getElementById('container');
 
-    function log(msg){ logEl.textContent = msg; }
+const btnStart = document.getElementById('btnStart');
+const btnFullscreen = document.getElementById('btnFullscreen');
+const btnWake = document.getElementById('btnWake');
 
-    function fitCanvasToVideo(){
-      const rect = canvas.getBoundingClientRect();
-      canvas.width = Math.max(1, Math.floor(rect.width));
-      canvas.height = Math.max(1, Math.floor(rect.height));
+const btnCalib = document.getElementById('btnCalib');
+const btnUndo = document.getElementById('btnUndo');
+const btnReset = document.getElementById('btnReset');
+
+const btnDots = document.getElementById('btnDots');
+const btnNeck = document.getElementById('btnNeck');
+const btnLabels = document.getElementById('btnLabels');
+
+let stream=null, showDots=false, showNeck=true, showText=true;
+let calibrating=false, pts=[];
+let H=null; // homografi [ [h11,h12,h13],[h21,h22,h23],[h31,h32,1] ]
+let wakeLock = null;
+
+function log(m){ logEl.textContent = m; }
+function fitCanvas(){ const r = canvas.getBoundingClientRect(); canvas.width=Math.max(1, r.width|0); canvas.height=Math.max(1, r.height|0); }
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.strokeStyle='rgba(107,195,255,.7)'; ctx.lineWidth=2; ctx.strokeRect(8,8,canvas.width-16,canvas.height-16);
+
+  // punkter/kvad
+  if(calibrating || pts.length){
+    ctx.fillStyle='rgba(255,255,255,.95)';
+    pts.forEach((p,i)=>{ ctx.beginPath(); ctx.arc(p.x,p.y,6,0,Math.PI*2); ctx.fill(); ctx.font='12px system-ui'; ctx.fillText(`${i+1}`, p.x+8, p.y-8); });
+    if(pts.length===4){
+      ctx.strokeStyle='rgba(255,255,255,.4)'; ctx.beginPath();
+      ctx.moveTo(pts[0].x,pts[0].y); ctx.lineTo(pts[1].x,pts[1].y); ctx.lineTo(pts[2].x,pts[2].y); ctx.lineTo(pts[3].x,pts[3].y); ctx.closePath(); ctx.stroke();
     }
+  }
 
-    function drawOverlay(){
-      ctx.clearRect(0,0,canvas.width,canvas.height);
-      // Tunn highlight-ram
-      ctx.strokeStyle = 'rgba(107,195,255,0.7)';
-      ctx.lineWidth = 2;
-      ctx.strokeRect(8,8,canvas.width-16,canvas.height-16);
+  if(H){
+    drawGridSVG();
+    if(showDots) drawEmDots();
+  }
+}
 
-      if(showDots){
-        // Demo-prickar (Em: 2:a band på 5:e & 4:e sträng)
-        const left = canvas.width*0.12;
-        const top = canvas.height*0.25;
-        const neckW = canvas.width*0.55;
-        const neckH = canvas.height*0.50;
-        const r = Math.max(6, Math.floor(canvas.width*0.01));
-        const frets = 5, strings = 6;
-        const fretGap = neckW/frets;
-        const stringGap = neckH/(strings-1);
-        const fret2x = left + (2*fretGap) - fretGap*0.35;
-        const yA = top + (1*stringGap); // 5:e sträng
-        const yD = top + (2*stringGap); // 4:e sträng
+function toScreen(u,v){
+  if(!H) return {x:0,y:0};
+  const x = (H[0][0]*u + H[0][1]*v + H[0][2]) / (H[2][0]*u + H[2][1]*v + 1);
+  const y = (H[1][0]*u + H[1][1]*v + H[1][2]) / (H[2][0]*u + H[2][1]*v + 1);
+  return {x,y};
+}
 
-        ctx.fillStyle = 'rgba(51,209,122,0.95)';
-        ctx.beginPath(); ctx.arc(fret2x, yA, r, 0, Math.PI*2); ctx.fill();
-        ctx.beginPath(); ctx.arc(fret2x, yD, r, 0, Math.PI*2); ctx.fill();
-      }
+// Bygg H från 4 par: (u,v)->(x,y), med h33=1 => 8 okända, 8 ekvationer
+function computeH(src, dst){
+  // src,dst arrays om 4 punkter i samma ordning
+  // okända: [h11 h12 h13 h21 h22 h23 h31 h32]
+  const A=[], b=[];
+  for(let i=0;i<4;i++){
+    const {x:X,y:Y} = dst[i];
+    const {x:u,y:v} = src[i];
+    A.push([ u, v, 1, 0, 0, 0, -u*X, -v*X ]); b.push(X);
+    A.push([ 0, 0, 0, u, v, 1, -u*Y, -v*Y ]); b.push(Y);
+  }
+  const h = solve8(A,b); // 8-vektor
+  return [ [h[0],h[1],h[2]], [h[3],h[4],h[5]], [h[6],h[7],1] ];
+}
+
+// Gauss-elimination för 8x8 (liten & snabb)
+function solve8(A,b){
+  const n=8;
+  // kopiera
+  const M=A.map(r=>r.slice()); const y=b.slice();
+  for(let i=0;i<n;i++){
+    // pivot
+    let p=i; for(let r=i+1;r<n;r++) if(Math.abs(M[r][i])>Math.abs(M[p][i])) p=r;
+    if(p!==i){ [M[i],M[p]]=[M[p],M[i]]; [y[i],y[p]]=[y[p],y[i]]; }
+    const piv = M[i][i]||1e-12;
+    for(let j=i;j<n;j++) M[i][j]/=piv; y[i]/=piv;
+    for(let r=0;r<n;r++) if(r!==i){ const f=M[r][i]; if(!f) continue; for(let j=i;j<n;j++) M[r][j]-=f*M[i][j]; y[r]-=f*y[i]; }
+  }
+  return y;
+}
+
+function drawGridSVG(){
+  while(svg.firstChild) svg.removeChild(svg.firstChild);
+  if(!showNeck) return;
+  const g = n=>document.createElementNS('http://www.w3.org/2000/svg',n);
+
+  // strängar (v 0..1)
+  for(let s=0;s<6;s++){
+    const v = s/5;
+    const p1=toScreen(0,v), p2=toScreen(1,v);
+    const line=g('line'); line.setAttribute('x1',p1.x); line.setAttribute('y1',p1.y);
+    line.setAttribute('x2',p2.x); line.setAttribute('y2',p2.y);
+    line.setAttribute('stroke','rgba(255,255,255,.55)'); line.setAttribute('stroke-width', s===0?2.2:s===5?1.4:1.8);
+    svg.appendChild(line);
+  }
+  // band 0..5 (linjärt för MVP – kalibrera upp till ca 5:e band)
+  const frets=5;
+  for(let f=0; f<=frets; f++){
+    const u = f/frets;
+    const p1=toScreen(u,0), p2=toScreen(u,1);
+    const line=g('line'); line.setAttribute('x1',p1.x); line.setAttribute('y1',p1.y);
+    line.setAttribute('x2',p2.x); line.setAttribute('y2',p2.y);
+    line.setAttribute('stroke','rgba(255,255,255,.5)'); line.setAttribute('stroke-width', f===0?4:2);
+    svg.appendChild(line);
+
+    if(showText && f>0){
+      const mid=toScreen(u-0.5/frets, -0.06);
+      const txt=g('text'); txt.setAttribute('x',mid.x); txt.setAttribute('y',mid.y);
+      txt.setAttribute('fill','rgba(233,240,248,.9)'); txt.setAttribute('font-size','14'); txt.setAttribute('text-anchor','middle');
+      txt.textContent=`Fret ${f}`; svg.appendChild(txt);
     }
+  }
+}
 
-    function drawSVG(){
-      while(svg.firstChild) svg.removeChild(svg.firstChild);
-      if(!showNeck) return;
+function drawEmDots(){
+  const frets=5;
+  const u = (2/frets) - (0.35/frets); // lite bakom bandet
+  const v5 = (6-5)/5, v4=(6-4)/5; // sträng 5 & 4
+  const pA = toScreen(u,v5), pD = toScreen(u,v4);
+  const r=Math.max(6,(canvas.width*0.015)|0);
+  ctx.fillStyle='rgba(51,209,122,.95)';
+  ctx.beginPath(); ctx.arc(pA.x,pA.y,r,0,Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(pD.x,pD.y,r,0,Math.PI*2); ctx.fill();
+}
 
-      const W=1280,H=720;
-      const left=W*0.12, top=H*0.25, neckW=W*0.55, neckH=H*0.50;
-      const frets=5, strings=6;
+// ==== UI ====
+async function startCamera(){
+  try{
+    btnStart.disabled=true;
+    log('Startar kamera…');
+    stream=await navigator.mediaDevices.getUserMedia({ video:{facingMode:'user',width:{ideal:1280},height:{ideal:720}}, audio:false });
+    video.srcObject=stream; await video.play();
+    fitCanvas(); draw();
+    enable(true);
+    log('Kamera igång. Rek: tryck Fullskärm → Starta kalibrering (sätt 4 hörn).');
+  }catch(e){
+    console.error(e); log('Kunde inte starta kamera: '+(e.message||e)); btnStart.disabled=false;
+  }
+}
 
-      const g = (name)=>document.createElementNS('http://www.w3.org/2000/svg',name);
+function enable(on){
+  [btnCalib,btnUndo,btnReset,btnDots,btnNeck,btnLabels].forEach(b=>b.disabled=!on);
+}
 
-      // Hals
-      const neck = g('rect');
-      neck.setAttribute('x',left); neck.setAttribute('y',top);
-      neck.setAttribute('width',neckW); neck.setAttribute('height',neckH);
-      neck.setAttribute('rx',12);
-      neck.setAttribute('fill','rgba(255,255,255,0.06)');
-      neck.setAttribute('stroke','rgba(255,255,255,0.12)');
-      svg.appendChild(neck);
+btnStart.addEventListener('click', startCamera);
 
-      // Band
-      for(let f=0; f<=frets; f++){
-        const x = left + f*(neckW/frets);
-        const line = g('line');
-        line.setAttribute('x1',x); line.setAttribute('y1',top);
-        line.setAttribute('x2',x); line.setAttribute('y2',top+neckH);
-        line.setAttribute('stroke','rgba(255,255,255,0.35)');
-        line.setAttribute('stroke-width',f===0?4:2);
-        svg.appendChild(line);
-      }
+btnFullscreen.addEventListener('click', async ()=>{
+  try{
+    if(!document.fullscreenElement){ await container.requestFullscreen(); container.classList.add('full'); fitCanvas(); draw();}
+    else { await document.exitFullscreen(); container.classList.remove('full'); fitCanvas(); draw(); }
+  }catch(e){ console.log(e); }
+});
 
-      // Strängar
-      for(let s=0; s<strings; s++){
-        const y = top + s*(neckH/(strings-1));
-        const line = g('line');
-        line.setAttribute('x1', left); line.setAttribute('y1', y);
-        line.setAttribute('x2', left+neckW); line.setAttribute('y2', y);
-        line.setAttribute('stroke','rgba(255,255,255,0.35)');
-        line.setAttribute('stroke-width', s===0?2.2 : s===5?1.4 : 1.8);
-        svg.appendChild(line);
-      }
+btnWake.addEventListener('click', async ()=>{
+  try{
+    if(!wakeLock){ wakeLock = await navigator.wakeLock.request('screen'); btnWake.textContent='Skärmlås aktivt ✓'; wakeLock.addEventListener('release',()=>{ btnWake.textContent='Håll skärmen vaken'; wakeLock=null; }); }
+    else { await wakeLock.release(); wakeLock=null; btnWake.textContent='Håll skärmen vaken'; }
+  }catch(e){ log('Wake Lock ej stödd i denna webbläsare.'); }
+});
 
-      if(showText){
-        // Etiketter (Fret 1–5)
-        for(let f=1; f<=frets; f++){
-          const x = left + f*(neckW/frets) - (neckW/frets)/2;
-          const txt = g('text');
-          txt.setAttribute('x', x);
-          txt.setAttribute('y', top-10);
-          txt.setAttribute('text-anchor','middle');
-          txt.setAttribute('fill','rgba(233,240,248,0.85)');
-          txt.setAttribute('font-size','16');
-          txt.textContent = `Fret ${f}`;
-          svg.appendChild(txt);
-        }
-      }
-    }
+btnCalib.addEventListener('click', ()=>{ calibrating=true; pts=[]; H=null; draw(); log('Kalibrering: klicka 4 hörn runt halsen (ö-v → ö-h → n-h → n-v).'); });
+btnUndo.addEventListener('click', ()=>{ if(pts.length){ pts.pop(); H=null; draw(); }});
+btnReset.addEventListener('click', ()=>{ pts=[]; H=null; draw(); log('Kalibrering rensad. Starta kalibrering igen.'); });
 
-    async function startCamera(){
-      try{
-        btnStart.disabled = true;
-        log('Startar kamera…');
-        stream = await navigator.mediaDevices.getUserMedia({
-          video:{ facingMode:'user', width:{ideal:1280}, height:{ideal:720} },
-          audio:false
-        });
-        video.srcObject = stream;
-        await video.play();
-        fitCanvasToVideo();
-        drawOverlay();
-        drawSVG();
-        btnDots.disabled = false;
-        btnNeck.disabled = false;
-        btnLabels.disabled = false;
-        btnClear.disabled = false;
-        log('Kamera igång. Du bör se dig själv speglad. Prova knapparna för prickar/hals/etiketter.');
-      }catch(err){
-        console.error(err);
-        log('Kunde inte starta kamera: ' + (err.message || err));
-        btnStart.disabled = false;
-      }
-    }
+btnDots.addEventListener('click', ()=>{ showDots=!showDots; draw(); });
+btnNeck.addEventListener('click', ()=>{ showNeck=!showNeck; draw(); });
+btnLabels.addEventListener('click', ()=>{ showText=!showText; draw(); });
 
-    // Responsiv uppdatering
-    const ro = new ResizeObserver(()=>{ if(!video.videoWidth) return; fitCanvasToVideo(); drawOverlay(); drawSVG(); });
-    ro.observe(document.getElementById('stage'));
-    window.addEventListener('resize', ()=>{ drawSVG(); });
+// Klick för punkter
+stage.addEventListener('click', (ev)=>{
+  if(!calibrating) return;
+  const r = stage.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  pts.push({x,y}); draw();
+  if(pts.length===4){
+    calibrating=false;
+    const src=[{x:0,y:0},{x:1,y:0},{x:1,y:1},{x:0,y:1}];
+    H = computeH(src, pts); draw();
+    log('Kalibrering klar. Slå på “Em-prickar” för att se placering.');
+  }
+});
 
-    video.addEventListener('loadedmetadata', ()=>{ fitCanvasToVideo(); drawOverlay(); drawSVG(); });
+// Responsiv uppdatering
+const ro=new ResizeObserver(()=>{ if(!video.videoWidth) return; fitCanvas(); draw(); drawGridSVG(); });
+ro.observe(stage);
+video.addEventListener('loadedmetadata', ()=>{ fitCanvas(); draw(); });
 
-    // UI
-    btnStart.addEventListener('click', startCamera);
-    btnDots.addEventListener('click', ()=>{ showDots=!showDots; drawOverlay(); log(showDots?'Testprickar aktiva (demo för Em).':'Testprickar dolda.'); });
-    btnNeck.addEventListener('click', ()=>{ showNeck=!showNeck; drawSVG(); log(showNeck?'SVG‑gitarrhals visas.':'SVG‑gitarrhals dold.'); });
-    btnLabels.addEventListener('click', ()=>{ showText=!showText; drawSVG(); log(showText?'Etiketter visas.':'Etiketter dolda.'); });
-    btnClear.addEventListener('click', ()=>{ showDots=false; drawOverlay(); showNeck=true; showText=true; drawSVG(); log('Overlay rensad.'); });
-
-    // Städa kamera när sidan stängs
-    window.addEventListener('beforeunload', ()=>{ if(stream) stream.getTracks().forEach(t=>t.stop()); });
-  </script>
+// Städa
+window.addEventListener('beforeunload', ()=>{ if(stream) stream.getTracks().forEach(t=>t.stop()); });
+</script>
 </body>
 </html>
